@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Secure Page</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #eef2f7;
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .box {
+    background: white;
+    padding: 25px 30px;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    width: 320px;
+    text-align: center;
+  }
+  input {
+    width: 100%;
+    padding: 10px;
+    margin-top: 12px;
+    font-size: 1rem;
+    border-radius: 8px;
+    border: 1px solid #cfd6df;
+  }
+  button {
+    width: 100%;
+    padding: 10px;
+    margin-top: 14px;
+    background: #0366d6;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1rem;
+    font-weight: bold;
+  }
+  button:hover {
+    background: #024b9c;
+  }
+  .error {
+    color: red;
+    margin-top: 12px;
+    display: none;
+  }
+</style>
+</head>
+
+<body>
+
+<div class="box">
+  <h2>Enter Password</h2>
+  <input id="pwd" type="password" placeholder="Password">
+  <button onclick="unlock()">Unlock</button>
+  <div id="err" class="error">Incorrect password or failed to decrypt.</div>
+</div>
+
+<script>
+// Convert base64 → Uint8Array
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+async function unlock() {
+  const password = document.getElementById("pwd").value;
+  const errorBox = document.getElementById("err");
+  errorBox.style.display = "none";
+
+  if (!password) {
+    errorBox.textContent = "Enter a password.";
+    errorBox.style.display = "block";
+    return;
+  }
+
+  try {
+    // Load encrypted data
+    const resp = await fetch("home.enc.json?cachebust=" + Date.now());
+    if (!resp.ok) throw new Error("Encrypted file missing.");
+    const encrypted = await resp.json();
+
+    const salt = b64ToBytes(encrypted.salt);
+    const iv = b64ToBytes(encrypted.iv);
+    const ct = b64ToBytes(encrypted.ct);
+    const iterations = encrypted.iterations || 200000;
+
+    // Derive key from password
+    const encoder = new TextEncoder();
+    const pwKey = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(password),
+      { name: "PBKDF2" },
+      false,
+      ["deriveKey"]
+    );
+
+    const aesKey = await crypto.subtle.deriveKey(
+      {
+        name: "PBKDF2",
+        salt: salt,
+        iterations: iterations,
+        hash: "SHA-256"
+      },
+      pwKey,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"]
+    );
+
+    // Decrypt
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: iv },
+      aesKey,
+      ct
+    );
+
+    const html = new TextDecoder().decode(decrypted);
+
+    // Replace page with decrypted content
+    document.open();
+    document.write(html);
+    document.close();
+
+  } catch (e) {
+    console.error("Decryption error:", e);
+    errorBox.style.display = "block";
+  }
+}
+</script>
+
+</body>
+</html>
